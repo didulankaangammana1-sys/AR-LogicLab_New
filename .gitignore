@@ -77,3 +77,4 @@ crashlytics-build.properties
 # Unity diagnostic and backup exports
 /AR-LogicLab_BurstDebugInformation_DoNotShip/
 /LogicLab_BackUpThisFolder_ButDontShipItWithYourGame/
+/AR-LogicLab*_BackUpThisFolder_ButDontShipItWithYourGame/
