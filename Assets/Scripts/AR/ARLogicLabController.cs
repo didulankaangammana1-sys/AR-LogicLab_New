@@ -43,9 +43,12 @@ public sealed class ARLogicLabController : MonoBehaviour
     private int codeStep = 2;
     private GameObject placedBoard;
     private GateCircuitVisual circuitVisual;
+    private ARCameraManager cameraManager;
     private Canvas canvas;
+    private Image pageBackdrop;
     private RectTransform safeRoot;
     private TextMeshProUGUI statusLabel;
+    private TextMeshProUGUI activityLabel;
     private TextMeshProUGUI lessonTitle;
     private TextMeshProUGUI lessonCopy;
     private TextMeshProUGUI lessonFormula;
@@ -59,6 +62,8 @@ public sealed class ARLogicLabController : MonoBehaviour
     private TextMeshProUGUI quizFeedback;
     private TextMeshProUGUI quizScoreLabel;
     private Button[] gateButtons;
+    private Button[] navigationButtons;
+    private Button placementButton;
     private Button quizZeroButton;
     private Button quizOneButton;
     private Button quizNextButton;
@@ -69,18 +74,23 @@ public sealed class ARLogicLabController : MonoBehaviour
     private AndroidJavaObject nativeTts;
     private bool ttsReady;
 #endif
+    private bool placementArmed;
+    private bool cameraFrameReceived;
+    private float lastCameraFrameTime;
+    private float nextARStatusRefresh;
     private readonly List<LogicQuizQuestion> quizBank = LogicQuizQuestion.CreateBank();
     private static readonly List<ARRaycastHit> RaycastHits = new List<ARRaycastHit>();
-    private static Sprite whiteSprite;
+    private static Sprite roundedSprite;
+    private static Texture2D roundedTexture;
 
-    private static readonly Color Navy = Hex("0A1422");
-    private static readonly Color Panel = Hex("122238");
-    private static readonly Color PanelLight = Hex("1A3048");
-    private static readonly Color Cyan = Hex("42D6E8");
-    private static readonly Color Muted = Hex("9DB1C4");
-    private static readonly Color Green = Hex("49DDA0");
-    private static readonly Color Red = Hex("FF747E");
-    private static readonly Color White = Hex("F3F8FC");
+    private static readonly Color Navy = Hex("081321");
+    private static readonly Color Panel = Hex("111E2E");
+    private static readonly Color PanelLight = Hex("1B2A3C");
+    private static readonly Color Cyan = Hex("66E3E8");
+    private static readonly Color Muted = Hex("A2B0C0");
+    private static readonly Color Green = Hex("66E2A3");
+    private static readonly Color Red = Hex("FF7D88");
+    private static readonly Color White = Hex("F1F5F9");
 
     private void Awake()
     {
@@ -88,6 +98,9 @@ public sealed class ARLogicLabController : MonoBehaviour
         Screen.orientation = ScreenOrientation.Portrait;
 #endif
         if (raycastManager == null) raycastManager = FindFirstObjectByType<ARRaycastManager>();
+        cameraManager = FindFirstObjectByType<ARCameraManager>();
+        ARSession.stateChanged += OnARSessionStateChanged;
+        if (cameraManager != null) cameraManager.frameReceived += OnARCameraFrameReceived;
         EnsureEventSystem();
         HidePrototypeCanvas();
         BuildInterface();
@@ -98,11 +111,23 @@ public sealed class ARLogicLabController : MonoBehaviour
         quizScore = PlayerPrefs.GetInt("ARLogicLab.QuizScore", 0);
         ShuffleQuizBank();
         RenderAll();
+        UpdateARStatus(ARSession.state);
     }
 
     private void Update()
     {
-        if (currentPage != Page.Lab || placedBoard != null || raycastManager == null) return;
+        if (Time.unscaledTime >= nextARStatusRefresh)
+        {
+            nextARStatusRefresh = Time.unscaledTime + .75f;
+            UpdateARStatus(ARSession.state);
+        }
+        if (cameraFrameReceived && Time.unscaledTime - lastCameraFrameTime > 1.5f)
+        {
+            cameraFrameReceived = false;
+            UpdateARStatus(ARSession.state);
+        }
+        if (currentPage != Page.Lab || placedBoard != null || !placementArmed || raycastManager == null) return;
+        if (!Application.isEditor && ARSession.state != ARSessionState.SessionTracking) return;
 
         Vector2 screenPosition;
         int pointerId;
@@ -127,6 +152,8 @@ public sealed class ARLogicLabController : MonoBehaviour
         placedBoard.transform.SetPositionAndRotation(pose.position + pose.up * .01f, pose.rotation);
         circuitVisual = placedBoard.AddComponent<GateCircuitVisual>();
         circuitVisual.Configure(selectedGate, inputA, inputB);
+        placementArmed = false;
+        UpdatePlacementButton();
         SetStatus("Circuit placed | change an input to explore the truth table");
         PlayFeedback();
     }
@@ -191,6 +218,13 @@ public sealed class ARLogicLabController : MonoBehaviour
         scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
         scaler.matchWidthOrHeight = .5f;
 
+        GameObject backdropObject = new GameObject("Learning page backdrop", typeof(RectTransform), typeof(Image));
+        backdropObject.transform.SetParent(root.transform, false);
+        Stretch(backdropObject.GetComponent<RectTransform>());
+        pageBackdrop = backdropObject.GetComponent<Image>();
+        pageBackdrop.color = new Color(Navy.r, Navy.g, Navy.b, .9f);
+        pageBackdrop.raycastTarget = false;
+
         GameObject safe = new GameObject("Safe Area", typeof(RectTransform));
         safe.transform.SetParent(root.transform, false);
         safeRoot = safe.GetComponent<RectTransform>();
@@ -198,8 +232,8 @@ public sealed class ARLogicLabController : MonoBehaviour
 
         RectTransform header = CreatePanel("Top bar", safeRoot, new Vector2(0, 1), new Vector2(1, 1), new Vector2(14, -154), new Vector2(-14, -12), Panel);
         CreateText("Brand", header, "LOGICLAB", 34, Cyan, TextAlignmentOptions.Left, new Vector2(22, -18), new Vector2(380, 54), FontStyles.Bold);
-        CreateText("Tagline", header, "AR CIRCUIT STUDIO", 18, Muted, TextAlignmentOptions.Left, new Vector2(25, -76), new Vector2(390, 35), FontStyles.Bold);
-        statusLabel = CreateText("AR status", header, "Preparing AR", 19, White, TextAlignmentOptions.Right, new Vector2(-24, -35), new Vector2(480, 42), FontStyles.Normal);
+        CreateText("Tagline", header, "FIELD GUIDE  ·  AR CIRCUIT STUDIO", 15, Muted, TextAlignmentOptions.Left, new Vector2(25, -76), new Vector2(420, 35), FontStyles.Bold);
+        statusLabel = CreateText("AR status", header, "STARTING ARCORE", 16, Cyan, TextAlignmentOptions.Right, new Vector2(-24, -35), new Vector2(480, 42), FontStyles.Bold);
         statusLabel.rectTransform.anchorMin = statusLabel.rectTransform.anchorMax = new Vector2(1, 1);
         statusLabel.rectTransform.pivot = new Vector2(1, 1);
         statusLabel.rectTransform.anchoredPosition = new Vector2(-24, -24);
@@ -214,6 +248,8 @@ public sealed class ARLogicLabController : MonoBehaviour
         BuildLabPage(safeRoot);
         BuildQuizPage(safeRoot);
         BuildNavigation(safeRoot);
+        RectTransform activity = CreatePanel("Activity message", safeRoot, new Vector2(.035f, 0), new Vector2(.965f, 0), new Vector2(0, 126), new Vector2(0, 180), Panel);
+        activityLabel = CreateText("Activity text", activity, "", 16, Muted, TextAlignmentOptions.Center, new Vector2(0, -10), new Vector2(920, 34), FontStyles.Normal);
         SetPage(Page.Learn);
         InitializeNarration();
     }
@@ -224,7 +260,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         page.transform.SetParent(parent, false);
         RectTransform rect = page.GetComponent<RectTransform>();
         Stretch(rect);
-        RectTransform card = CreatePanel("Lesson card", rect, new Vector2(.04f, 1), new Vector2(.96f, 1), new Vector2(0, -650), new Vector2(0, -182), Panel);
+        RectTransform card = CreatePanel("Lesson card", rect, new Vector2(.04f, 1), new Vector2(.96f, 1), new Vector2(0, -665), new Vector2(0, -174), Panel);
         CreateText("Course label", card, "THE LOGIC GATE FIELD GUIDE", 17, Cyan, TextAlignmentOptions.Left, new Vector2(26, -22), new Vector2(560, 32), FontStyles.Bold);
         lessonTitle = CreateText("Lesson title", card, "", 31, White, TextAlignmentOptions.Left, new Vector2(26, -70), new Vector2(850, 55), FontStyles.Bold);
         lessonCopy = CreateText("Lesson explanation", card, "", 22, White, TextAlignmentOptions.TopLeft, new Vector2(26, -145), new Vector2(850, 140), FontStyles.Normal);
@@ -236,7 +272,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         next.onClick.AddListener(() => ChangeLesson(1));
         Button narration = CreateButton("Play lesson audio", card, "READ LESSON ALOUD", new Vector2(0, -505), new Vector2(560, 64), PanelLight, 17);
         narration.onClick.AddListener(PlayLessonNarration);
-        Button practice = CreateButton("Practice lesson", rect, "OPEN INTERACTIVE LAB", new Vector2(0, -845), new Vector2(640, 78), Green, 20, Navy);
+        Button practice = CreateButton("Practice lesson", rect, "OPEN INTERACTIVE LAB", new Vector2(0, -785), new Vector2(640, 78), Green, 20, Navy);
         practice.onClick.AddListener(() => SetPage(Page.Lab));
     }
 
@@ -258,7 +294,7 @@ public sealed class ARLogicLabController : MonoBehaviour
             gateButtons[i].onClick.AddListener(() => SelectGate(LogicGateDefinition.All[index]));
         }
 
-        RectTransform card = CreatePanel("Circuit controls", rect, new Vector2(.035f, 0), new Vector2(.965f, 0), new Vector2(0, 145), new Vector2(0, 560), Panel);
+        RectTransform card = CreatePanel("Circuit controls", rect, new Vector2(.035f, 0), new Vector2(.965f, 0), new Vector2(0, 200), new Vector2(0, 615), Panel);
         labFormula = CreateText("Live rule", card, "", 24, Cyan, TextAlignmentOptions.Center, new Vector2(0, -20), new Vector2(850, 42), FontStyles.Bold);
         Button a = CreateButton("Toggle input A", card, "INPUT A   0", new Vector2(-285, -112), new Vector2(260, 78), PanelLight, 21);
         Button b = CreateButton("Toggle input B", card, "INPUT B   0", new Vector2(0, -112), new Vector2(260, 78), PanelLight, 21);
@@ -269,12 +305,13 @@ public sealed class ARLogicLabController : MonoBehaviour
         inputAValue = a.GetComponentInChildren<TextMeshProUGUI>();
         inputBValue = b.GetComponentInChildren<TextMeshProUGUI>();
         outputValue = CreateText("Truth output", card, "Y = 0", 25, White, TextAlignmentOptions.Center, new Vector2(0, -178), new Vector2(360, 40), FontStyles.Bold);
-        codeDisplay = CreateText("Code listing", rect, "", 18, White, TextAlignmentOptions.TopLeft, new Vector2(35, -385), new Vector2(660, 128), FontStyles.Normal, true);
-        codeStepDisplay = CreateText("Code walkthrough", rect, "STEP 1 / 4", 16, Muted, TextAlignmentOptions.TopLeft, new Vector2(35, -525), new Vector2(460, 32), FontStyles.Bold);
-        Button step = CreateButton("Advance code step", rect, "NEXT CODE STEP", new Vector2(0, -580), new Vector2(430, 60), PanelLight, 17);
+        RectTransform codeCard = CreatePanel("Code walkthrough card", rect, new Vector2(.04f, 1), new Vector2(.96f, 1), new Vector2(0, -638), new Vector2(0, -360), Panel);
+        codeDisplay = CreateText("Code listing", codeCard, "", 18, White, TextAlignmentOptions.TopLeft, new Vector2(0, -20), new Vector2(850, 120), FontStyles.Normal, true);
+        codeStepDisplay = CreateText("Code walkthrough", codeCard, "STEP 1 / 4", 15, Muted, TextAlignmentOptions.Left, new Vector2(0, -145), new Vector2(850, 30), FontStyles.Bold);
+        Button step = CreateButton("Advance code step", codeCard, "NEXT CODE STEP", new Vector2(0, -190), new Vector2(430, 58), PanelLight, 16);
         step.onClick.AddListener(AdvanceCodeStep);
-        Button place = CreateButton("Place AR circuit", rect, "SCAN & PLACE CIRCUIT", new Vector2(0, -655), new Vector2(600, 68), Cyan, 18, Navy);
-        place.onClick.AddListener(() => SetStatus("Point at a flat surface, then tap the camera view"));
+        placementButton = CreateButton("Place AR circuit", rect, "ARM PLACEMENT", new Vector2(0, -720), new Vector2(600, 68), Cyan, 18, Navy);
+        placementButton.onClick.AddListener(TogglePlacementMode);
     }
 
     private void BuildQuizPage(RectTransform parent)
@@ -283,7 +320,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         page.transform.SetParent(parent, false);
         RectTransform rect = page.GetComponent<RectTransform>();
         Stretch(rect);
-        RectTransform card = CreatePanel("Quiz card", rect, new Vector2(.04f, .5f), new Vector2(.96f, .5f), new Vector2(0, -390), new Vector2(0, 390), Panel);
+        RectTransform card = CreatePanel("Quiz card", rect, new Vector2(.04f, .5f), new Vector2(.96f, .5f), new Vector2(0, -525), new Vector2(0, 455), Panel);
         CreateText("Quiz label", card, "QUICK CHECK  |  28 QUESTIONS", 17, Cyan, TextAlignmentOptions.Left, new Vector2(28, -22), new Vector2(650, 32), FontStyles.Bold);
         quizScoreLabel = CreateText("Quiz score", card, "SCORE  0", 17, Muted, TextAlignmentOptions.Right, new Vector2(-25, -22), new Vector2(240, 32), FontStyles.Bold);
         quizPrompt = CreateText("Question", card, "", 27, White, TextAlignmentOptions.Center, new Vector2(0, -125), new Vector2(860, 155), FontStyles.Bold);
@@ -292,13 +329,9 @@ public sealed class ARLogicLabController : MonoBehaviour
         quizZeroButton.onClick.AddListener(() => AnswerQuiz(false));
         quizOneButton.onClick.AddListener(() => AnswerQuiz(true));
         quizFeedback = CreateText("Quiz feedback", card, "", 19, Muted, TextAlignmentOptions.Center, new Vector2(0, -342), new Vector2(820, 38), FontStyles.Normal);
-        quizNextButton = CreateButton("Next question", card, "NEXT QUESTION", new Vector2(0, -450), new Vector2(430, 68), Cyan, 18, Navy);
+        quizNextButton = CreateButton("Next question", card, "NEXT QUESTION", new Vector2(-205, -440), new Vector2(350, 68), Cyan, 17, Navy);
         quizNextButton.onClick.AddListener(NextQuestion);
-        Button retry = CreateButton("Restart quiz", rect, "SHUFFLE & RESTART", new Vector2(0, 130), new Vector2(470, 56), PanelLight, 16);
-        RectTransform retryRect = retry.GetComponent<RectTransform>();
-        retryRect.anchorMin = retryRect.anchorMax = Vector2.zero;
-        retryRect.pivot = Vector2.zero;
-        retryRect.anchoredPosition = new Vector2(0, 130);
+        Button retry = CreateButton("Restart quiz", card, "SHUFFLE & RESTART", new Vector2(205, -440), new Vector2(350, 68), PanelLight, 16);
         retry.onClick.AddListener(RestartQuiz);
         RenderQuizQuestion();
     }
@@ -306,9 +339,10 @@ public sealed class ARLogicLabController : MonoBehaviour
     private void BuildNavigation(RectTransform parent)
     {
         RectTransform nav = CreatePanel("Bottom navigation", parent, new Vector2(.035f, 0), new Vector2(.965f, 0), new Vector2(0, 20), new Vector2(0, 116), Panel);
-        Button learn = CreateButton("Learn tab", nav, "LEARN", new Vector2(-300, 0), new Vector2(250, 72), PanelLight, 18);
-        Button lab = CreateButton("Lab tab", nav, "CIRCUIT LAB", new Vector2(0, 0), new Vector2(310, 72), PanelLight, 18);
-        Button quiz = CreateButton("Quiz tab", nav, "QUIZ", new Vector2(300, 0), new Vector2(250, 72), PanelLight, 18);
+        Button learn = CreateButton("Learn tab", nav, "01   LEARN", new Vector2(-300, 0), new Vector2(250, 72), PanelLight, 16);
+        Button lab = CreateButton("Lab tab", nav, "02   CIRCUIT LAB", new Vector2(0, 0), new Vector2(310, 72), PanelLight, 16);
+        Button quiz = CreateButton("Quiz tab", nav, "03   QUIZ", new Vector2(300, 0), new Vector2(250, 72), PanelLight, 16);
+        navigationButtons = new[] { learn, lab, quiz };
         learn.onClick.AddListener(() => SetPage(Page.Learn));
         lab.onClick.AddListener(() => SetPage(Page.Lab));
         quiz.onClick.AddListener(() => SetPage(Page.Quiz));
@@ -325,7 +359,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         RenderCircuit();
         RenderCode();
         RenderQuizQuestion();
-        SetStatus("AR READY  |  OPEN CIRCUIT LAB TO BEGIN");
+        UpdateARStatus(ARSession.state);
     }
 
     private void RenderLesson()
@@ -384,14 +418,31 @@ public sealed class ARLogicLabController : MonoBehaviour
 
     private void SetPage(Page page)
     {
+        if (page != Page.Lab && placementArmed)
+        {
+            placementArmed = false;
+            UpdatePlacementButton();
+        }
         currentPage = page;
         if (safeRoot == null) return;
         SetChildActive("Learn page", page == Page.Learn);
         SetChildActive("Interactive lab page", page == Page.Lab);
         SetChildActive("Quiz page", page == Page.Quiz);
+        if (pageBackdrop != null) pageBackdrop.enabled = page != Page.Lab;
+        if (navigationButtons != null)
+        {
+            Color[] activeColors = { Cyan, Green, new Color(.49f, .66f, 1f) };
+            for (int i = 0; i < navigationButtons.Length; i++)
+            {
+                bool selected = i == (int)page;
+                navigationButtons[i].GetComponent<Image>().color = selected ? activeColors[i] : PanelLight;
+                navigationButtons[i].GetComponentInChildren<TextMeshProUGUI>().color = selected ? Navy : White;
+            }
+        }
         SetStatus(page == Page.Lab
-            ? "CIRCUIT LAB  |  TAP A DETECTED SURFACE TO PLACE"
-            : page == Page.Quiz ? "QUIZ  |  PRACTISE ALL SEVEN LOGIC GATES" : "LESSONS  |  FIVE SHORT, HANDS-ON CHAPTERS");
+            ? "Choose a gate, arm placement, then tap a detected surface."
+            : page == Page.Quiz ? "Work through 28 questions across all seven logic gates."
+            : "Five short lessons. Predict the output before you reveal it.");
     }
 
     private void SetChildActive(string name, bool active)
@@ -494,6 +545,8 @@ public sealed class ARLogicLabController : MonoBehaviour
         if (placedBoard != null) Destroy(placedBoard);
         placedBoard = null;
         circuitVisual = null;
+        placementArmed = false;
+        UpdatePlacementButton();
         inputA = inputB = false;
         RenderCircuit();
         SetStatus("Circuit cleared | scan a flat surface and tap to place it again");
@@ -554,8 +607,75 @@ public sealed class ARLogicLabController : MonoBehaviour
 
     private void SetStatus(string text)
     {
-        if (statusLabel != null) statusLabel.text = text;
+        if (activityLabel != null) activityLabel.text = text;
         if (statusText != null) statusText.text = text;
+    }
+
+    private void TogglePlacementMode()
+    {
+        placementArmed = !placementArmed;
+        UpdatePlacementButton();
+        SetStatus(placementArmed
+            ? "Placement active · move slowly, then tap a flat surface."
+            : "Placement paused · arm placement when you are ready.");
+    }
+
+    private void UpdatePlacementButton()
+    {
+        if (placementButton == null) return;
+        Image image = placementButton.GetComponent<Image>();
+        image.color = placementArmed ? Green : Cyan;
+        TextMeshProUGUI label = placementButton.GetComponentInChildren<TextMeshProUGUI>();
+        label.text = placementArmed ? "PLACEMENT ACTIVE  ·  TAP A SURFACE" : "ARM PLACEMENT";
+        label.color = Navy;
+    }
+
+    private void OnARSessionStateChanged(ARSessionStateChangedEventArgs args)
+    {
+        UpdateARStatus(args.state);
+    }
+
+    private void OnARCameraFrameReceived(ARCameraFrameEventArgs args)
+    {
+        lastCameraFrameTime = Time.unscaledTime;
+        if (cameraFrameReceived) return;
+        cameraFrameReceived = true;
+        UpdateARStatus(ARSession.state);
+    }
+
+    private void UpdateARStatus(ARSessionState state)
+    {
+        if (statusLabel == null) return;
+        string message;
+        Color color;
+        if (Application.isEditor)
+        {
+            message = "EDITOR PREVIEW";
+            color = Muted;
+        }
+#if UNITY_ANDROID && !UNITY_EDITOR
+        else if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Camera))
+        {
+            message = "CAMERA ACCESS REQUIRED";
+            color = Red;
+        }
+#endif
+        else
+        {
+            switch (state)
+            {
+                case ARSessionState.CheckingAvailability: message = "CHECKING ARCORE"; color = Cyan; break;
+                case ARSessionState.NeedsInstall: message = "ARCORE UPDATE NEEDED"; color = Red; break;
+                case ARSessionState.Installing: message = "INSTALLING ARCORE"; color = Cyan; break;
+                case ARSessionState.Ready: message = cameraFrameReceived ? "CAMERA LIVE" : "WAITING FOR CAMERA"; color = Cyan; break;
+                case ARSessionState.SessionInitializing: message = cameraFrameReceived ? "CAMERA LIVE · MOVE TO TRACK" : "STARTING CAMERA"; color = Cyan; break;
+                case ARSessionState.SessionTracking: message = "CAMERA LIVE · TRACKING"; color = Green; break;
+                case ARSessionState.Unsupported: message = "ARCORE NOT SUPPORTED"; color = Red; break;
+                default: message = "STARTING ARCORE"; color = Cyan; break;
+            }
+        }
+        statusLabel.text = "●  " + message;
+        statusLabel.color = color;
     }
 
     private void ApplySafeArea()
@@ -586,6 +706,14 @@ public sealed class ARLogicLabController : MonoBehaviour
         image.color = color;
         image.type = Image.Type.Sliced;
         image.raycastTarget = false;
+        Shadow shadow = item.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0, 0, 0, .22f);
+        shadow.effectDistance = new Vector2(0, -7);
+        shadow.useGraphicAlpha = true;
+        Outline outline = item.AddComponent<Outline>();
+        outline.effectColor = new Color(Cyan.r, Cyan.g, Cyan.b, .1f);
+        outline.effectDistance = new Vector2(1, -1);
+        outline.useGraphicAlpha = true;
         return rect;
     }
 
@@ -607,6 +735,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         label.fontStyle = style;
         label.textWrappingMode = TextWrappingModes.Normal;
         label.raycastTarget = false;
+        label.margin = Vector4.zero;
         if (TMP_Settings.defaultFontAsset != null) label.font = TMP_Settings.defaultFontAsset;
         if (monospace) label.fontSize = fontSize;
         return label;
@@ -625,6 +754,10 @@ public sealed class ARLogicLabController : MonoBehaviour
         Image image = item.GetComponent<Image>();
         image.sprite = WhiteSprite();
         image.color = background;
+        Shadow shadow = item.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0, 0, 0, .2f);
+        shadow.effectDistance = new Vector2(0, -5);
+        shadow.useGraphicAlpha = true;
         Button button = item.GetComponent<Button>();
         button.targetGraphic = image;
         button.transition = Selectable.Transition.ColorTint;
@@ -655,8 +788,34 @@ public sealed class ARLogicLabController : MonoBehaviour
 
     private static Sprite WhiteSprite()
     {
-        if (whiteSprite == null) whiteSprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0, 0, 1, 1), new Vector2(.5f, .5f));
-        return whiteSprite;
+        if (roundedSprite != null) return roundedSprite;
+
+        const int size = 96;
+        const float radius = 18f;
+        roundedTexture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        roundedTexture.name = "LogicLab rounded UI sprite";
+        roundedTexture.hideFlags = HideFlags.HideAndDontSave;
+        roundedTexture.filterMode = FilterMode.Bilinear;
+        roundedTexture.wrapMode = TextureWrapMode.Clamp;
+        Color32[] pixels = new Color32[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = Mathf.Max(Mathf.Max(radius - (x + .5f), 0), x + .5f - (size - radius));
+                float dy = Mathf.Max(Mathf.Max(radius - (y + .5f), 0), y + .5f - (size - radius));
+                float distance = Mathf.Sqrt(dx * dx + dy * dy) - radius;
+                byte alpha = (byte)(Mathf.Clamp01(.5f - distance) * 255f);
+                pixels[y * size + x] = new Color32(255, 255, 255, alpha);
+            }
+        }
+        roundedTexture.SetPixels32(pixels);
+        roundedTexture.Apply(false, false);
+        roundedSprite = Sprite.Create(roundedTexture, new Rect(0, 0, size, size), new Vector2(.5f, .5f), 100, 0,
+            SpriteMeshType.FullRect, new Vector4(radius, radius, radius, radius));
+        roundedSprite.name = "LogicLab rounded UI";
+        roundedSprite.hideFlags = HideFlags.HideAndDontSave;
+        return roundedSprite;
     }
 
     private static Color Hex(string html)
@@ -687,6 +846,8 @@ public sealed class ARLogicLabController : MonoBehaviour
 
     private void OnDestroy()
     {
+        ARSession.stateChanged -= OnARSessionStateChanged;
+        if (cameraManager != null) cameraManager.frameReceived -= OnARCameraFrameReceived;
         if (codeRoutine != null) StopCoroutine(codeRoutine);
         if (feedbackClip != null) Destroy(feedbackClip);
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -698,5 +859,7 @@ public sealed class ARLogicLabController : MonoBehaviour
             nativeTts = null;
         }
 #endif
+        if (roundedSprite != null) Destroy(roundedSprite);
+        if (roundedTexture != null) Destroy(roundedTexture);
     }
 }
