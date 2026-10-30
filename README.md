@@ -13,7 +13,7 @@ AR LogicLab is a Unity 6.3 LTS learning app for experimenting with Boolean logic
 
 1. Open this folder in Unity **6000.3 LTS**. Let Package Manager finish resolving packages.
 2. Open **Assets/Scenes/ARLearning.unity**. The scene is already the first enabled Android build scene.
-3. In **File → Build Profiles**, choose Android and build/run on an ARCore-supported Android phone. Allow camera access when Android requests it.
+3. In **File → Build Profiles**, choose Android. Use **Build** to create an APK without a connected phone. Use **Build And Run** only after the phone appears in **Run Device** and USB debugging is authorized. Allow camera access on the phone.
 4. Open **Circuit Lab**, choose a gate, move the phone slowly until a plane is found, and tap the camera view to place a circuit. If a surface is not available, the on-screen inputs and truth-table simulation still work.
 
 The project uses AR Foundation and ARCore 6.3.5 with the Input System. Unity's editor may show “No active XRPlaneSubsystem” while not running on an AR-capable device; plane detection is supplied by the device runtime. A headset or physical phone is needed to verify camera tracking and placement.
@@ -21,3 +21,10 @@ The project uses AR Foundation and ARCore 6.3.5 with the Input System. Unity's e
 ## Checks
 
 Edit Mode tests in `Assets/Tests/EditMode` cover representative truth-table rows, the seven-gate/28-case quiz bank, and the five-lesson catalog. Run them from **Window → General → Test Runner → EditMode**.
+
+## Android device and console messages
+
+- `No Android devices connected` appears when **Build And Run** cannot see a phone through ADB. Use **Build** to make the APK; install it on the phone separately.
+- Enable USB debugging in Developer options, use **File transfer** mode, reconnect, and accept the phone's **Allow USB debugging** prompt. If ADB still sees no device, check the USB cable, port, and driver.
+- `1 URP assets included in build` is informational.
+- If Unity reports that Diagnostics Data needs symbols, choose **Public (Symbol Table)** in Android **Debug Symbols**. Unity creates a `.symbols.zip` archive for crash stack traces.
