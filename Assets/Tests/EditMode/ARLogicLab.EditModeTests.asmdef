@@ -1,0 +1,15 @@
+{
+  "name": "ARLogicLab.EditModeTests",
+  "rootNamespace": "",
+  "references": ["ARLogicLab.Logic"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": ["TestAssemblies"]
+}
