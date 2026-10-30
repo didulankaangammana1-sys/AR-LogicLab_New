@@ -18,6 +18,7 @@ public sealed class ARLogicLabController : MonoBehaviour
 {
     [Header("AR Setup (scene references are discovered automatically when empty)")]
     [SerializeField] private ARRaycastManager raycastManager;
+    [SerializeField] private ARPlaneManager planeManager;
     [SerializeField] private GameObject boardPrefab;
 
     // Kept for scene compatibility with the original prototype. The responsive UI is created at runtime.
@@ -98,6 +99,9 @@ public sealed class ARLogicLabController : MonoBehaviour
         Screen.orientation = ScreenOrientation.Portrait;
 #endif
         if (raycastManager == null) raycastManager = FindFirstObjectByType<ARRaycastManager>();
+        if (planeManager == null) planeManager = FindFirstObjectByType<ARPlaneManager>();
+        if (planeManager != null)
+            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
         cameraManager = FindFirstObjectByType<ARCameraManager>();
         ARSession.stateChanged += OnARSessionStateChanged;
         if (cameraManager != null) cameraManager.frameReceived += OnARCameraFrameReceived;
@@ -126,8 +130,8 @@ public sealed class ARLogicLabController : MonoBehaviour
             cameraFrameReceived = false;
             UpdateARStatus(ARSession.state);
         }
-        if (currentPage != Page.Lab || placedBoard != null || !placementArmed || raycastManager == null) return;
-        if (!Application.isEditor && ARSession.state != ARSessionState.SessionTracking) return;
+
+        if (currentPage != Page.Lab || raycastManager == null) return;
 
         Vector2 screenPosition;
         int pointerId;
@@ -135,9 +139,33 @@ public sealed class ARLogicLabController : MonoBehaviour
         if (EventSystem.current != null &&
             (pointerId < 0 ? EventSystem.current.IsPointerOverGameObject() : EventSystem.current.IsPointerOverGameObject(pointerId))) return;
 
-        if (!raycastManager.Raycast(screenPosition, RaycastHits, TrackableType.PlaneWithinPolygon))
+        if (placementArmed)
         {
-            SetStatus("No surface found yet | move slowly to scan a flat area");
+            if (!Application.isEditor && ARSession.state != ARSessionState.SessionTracking)
+            {
+                SetStatus("AR is tracking | move slowly until a surface is found");
+                return;
+            }
+
+            TryPlaceCircuit(screenPosition);
+            return;
+        }
+
+        if (placedBoard == null || circuitVisual == null || Camera.main == null) return;
+        bool inputAWasHit;
+        Ray ray = Camera.main.ScreenPointToRay(screenPosition);
+        if (!circuitVisual.TryGetInputSwitch(ray, out inputAWasHit)) return;
+
+        if (inputAWasHit) ToggleA();
+        else ToggleB();
+    }
+
+    private void TryPlaceCircuit(Vector2 screenPosition)
+    {
+        TrackableType placementTargets = TrackableType.PlaneWithinPolygon | TrackableType.PlaneWithinBounds;
+        if (!raycastManager.Raycast(screenPosition, RaycastHits, placementTargets))
+        {
+            SetStatus("No tracked surface yet | slowly scan a table, floor, or wall");
             return;
         }
 
@@ -148,16 +176,21 @@ public sealed class ARLogicLabController : MonoBehaviour
             Vector3 forward = Vector3.ProjectOnPlane(camera.transform.forward, pose.up);
             if (forward.sqrMagnitude > .001f) pose.rotation = Quaternion.LookRotation(forward, pose.up);
         }
-        placedBoard = new GameObject("AR LogicLab Circuit");
-        placedBoard.transform.SetPositionAndRotation(pose.position + pose.up * .01f, pose.rotation);
-        circuitVisual = placedBoard.AddComponent<GateCircuitVisual>();
+
+        Vector3 surfaceOffset = pose.position + pose.up * .006f;
+        if (placedBoard == null)
+        {
+            placedBoard = new GameObject("AR LogicLab Circuit");
+            circuitVisual = placedBoard.AddComponent<GateCircuitVisual>();
+        }
+
+        placedBoard.transform.SetPositionAndRotation(surfaceOffset, pose.rotation);
         circuitVisual.Configure(selectedGate, inputA, inputB);
         placementArmed = false;
         UpdatePlacementButton();
-        SetStatus("Circuit placed | change an input to explore the truth table");
+        SetStatus("Circuit placed | tap either metal switch or the input controls");
         PlayFeedback();
     }
-
     private static bool TryGetPointerDown(out Vector2 position, out int pointerId)
     {
         if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame)
@@ -304,7 +337,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         reset.onClick.AddListener(ResetCircuit);
         inputAValue = a.GetComponentInChildren<TextMeshProUGUI>();
         inputBValue = b.GetComponentInChildren<TextMeshProUGUI>();
-        outputValue = CreateText("Truth output", card, "Y = 0", 25, White, TextAlignmentOptions.Center, new Vector2(0, -178), new Vector2(360, 40), FontStyles.Bold);
+        outputValue = CreateText("Truth output", card, "Y = 0", 25, White, TextAlignmentOptions.Center, new Vector2(0, -210), new Vector2(360, 40), FontStyles.Bold);
         RectTransform codeCard = CreatePanel("Code walkthrough card", rect, new Vector2(.04f, 1), new Vector2(.96f, 1), new Vector2(0, -638), new Vector2(0, -360), Panel);
         codeDisplay = CreateText("Code listing", codeCard, "", 18, White, TextAlignmentOptions.TopLeft, new Vector2(0, -20), new Vector2(850, 120), FontStyles.Normal, true);
         codeStepDisplay = CreateText("Code walkthrough", codeCard, "STEP 1 / 4", 15, Muted, TextAlignmentOptions.Left, new Vector2(0, -145), new Vector2(850, 30), FontStyles.Bold);
@@ -626,7 +659,7 @@ public sealed class ARLogicLabController : MonoBehaviour
         Image image = placementButton.GetComponent<Image>();
         image.color = placementArmed ? Green : Cyan;
         TextMeshProUGUI label = placementButton.GetComponentInChildren<TextMeshProUGUI>();
-        label.text = placementArmed ? "PLACEMENT ACTIVE  ·  TAP A SURFACE" : "ARM PLACEMENT";
+        label.text = placementArmed ? "PLACEMENT ACTIVE  ·  TAP A SURFACE" : (placedBoard != null ? "REPOSITION CIRCUIT" : "ARM PLACEMENT");
         label.color = Navy;
     }
 
